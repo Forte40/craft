@@ -1,0 +1,6 @@
+{
+  ["Furnace"] = {1, "Cobblestone", "Cobblestone", "Cobblestone", "Cobblestone", "", "Cobblestone", "Cobblestone", "Cobblestone", "Cobblestone"},
+  ["Chest"] = {1, "Oak Wood Planks", "Oak Wood Planks", "Oak Wood Planks", "Oak Wood Planks", "", "Oak Wood Planks", "Oak Wood Planks", "Oak Wood Planks", "Oak Wood Planks"},
+  ["Oak Wood Planks"]= {4, "Oak Wood"},
+  ["Stick"] = {4, "Oak Wood Planks", "", "", "Oak Wood Planks"},
+}
