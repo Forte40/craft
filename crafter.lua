@@ -87,6 +87,7 @@ function addString(s, id)
   for i = 1, #s do
     addTrie(s:sub(i), id, gtrie)
   end
+  table.insert(gtrie, id)
 end
 
 function addTrie(s, id, trie)
@@ -291,15 +292,19 @@ function make(id, amount)
       end
     end
   end
-  for mid, slots in pairs(mat) do
-    request(mid, amount, slots)
+  while amount > 0 do
+    local currAmount = amount > 64 and 64 or amount
+    amount = amount - 64
+    for mid, slots in pairs(mat) do
+      request(mid, amount, slots)
+    end
+    turtle.select(1)
+    turtle.craft()
+    local count = turtle.getItemCount(1)
+    local direction = getDirection(id)
+    s.extract(dir, id, direction, count)
+    idAdd(id, count, direction)
   end
-  turtle.select(1)
-  turtle.craft()
-  local count = turtle.getItemCount(1)
-  local direction = getDirection(id)
-  s.extract(dir, id, direction, count)
-  idAdd(id, count, direction)
   return true
 end
 
@@ -319,10 +324,10 @@ function unloadTurtle()
 end
 
 function search(name, trie)
+  trie = trie or gtrie
   if name == "" then
     return trie
   end
-  trie = trie or gtrie
   c = name:sub(1,1)
   if trie[c] then
     return search(name:sub(2), trie[c])
@@ -340,4 +345,71 @@ if name then
     print(ids[id].." = "..count)
   end
 end
-make(54, 8)
+--make(54, 8)
+
+local text = ""
+
+function sortTotal(a, b)
+  if inv[a] then
+    if inv[b] then
+      return inv[a].total > inv[b].total
+    else
+      return true
+    end
+  elseif inv[b] then
+    return false
+  else
+    return true
+  end
+end
+
+os.loadAPI("panel")
+local panelItems = panel.new{y=2, h=10}
+local panelSearch = panel.new{y=12, h=1}
+
+function listItems(text)
+  local sids = search(text)
+  table.sort(sids, sortTotal)
+  panelItems:redirect()
+  local width, height = term.getSize()
+  term.clear()
+  for i = 1, math.min(sids and #sids or height, height - 1) do
+    local id = sids[i]
+    term.setCursorPos(1, i)
+    write(tostring(inv[id] and inv[id].total or 0))
+    write(" ")
+    write(ids[id])
+  end
+end
+
+term.clear()
+listItems("")
+term.clear()
+listItems("")
+term.setCursorBlink(true)
+term.setCursorPos(1, 1)
+while true do
+  panelSearch:redirect()
+  local width = term.getSize()
+  local event, code = os.pullEvent()
+  if event == "char" then
+    text = text .. code
+    term.setCursorPos(#text, 1)
+    write(code)
+    listItems(text)
+  elseif event == "key" then
+    if code == keys.backspace then
+      term.setCursorPos(#text, 1)
+      write(" ")
+      term.setCursorPos(#text, 1)
+      text = text:sub(1, #text - 1)
+      listItems(text)
+    elseif code == keys.delete then
+      term.setCursorPos(1, 1)
+      write(string.rep(" ", width))
+      term.setCursorPos(1, 1)
+      text = ""
+      listItems(text)
+    end
+  end
+end
