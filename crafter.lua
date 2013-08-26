@@ -158,7 +158,6 @@ for _, recipefile in ipairs(fs.list("recipe")) do
         end
       end
     end
-    print(textutils.serialize(recipes))
   end
 end
 print(count)
@@ -192,6 +191,7 @@ function idSub(id, amount, direction)
 end
 
 function getInventory()
+  inv = {}
   for direction = 0, 5 do
     local l = s.list(direction)
     if l then
@@ -347,69 +347,267 @@ if name then
 end
 --make(54, 8)
 
-local text = ""
-
-function sortTotal(a, b)
-  if inv[a] then
-    if inv[b] then
-      return inv[a].total > inv[b].total
+function orderBy(lookup, prop, descending, default)
+  lookup = lookup or inv
+  if descending == nil then descending = false end
+  if default == nil then default = 0 end
+  return function (a, b)
+    local av, bv
+    if prop then
+      av = lookup[a] and lookup[a][prop] or default
+      bv = lookup[b] and lookup[b][prop] or default
     else
-      return true
+      av = lookup[a] or default
+      bv = lookup[b] or default
     end
-  elseif inv[b] then
-    return false
+    return (av > bv) == descending
+  end
+end
+
+function filterBy(list, stored, craft)
+  local fids = {}
+  for _, id in ipairs(list) do
+    if (craft and recipes[id] ~= nil) or (stored and inv[id] ~= nil and inv[id].total > 0) then
+      table.insert(fids, id)
+    end
+  end
+  return fids
+end
+
+function formatNumber(n)
+  if n < 10 then
+    return "   "..tostring(n)
+  elseif n < 100 then
+    return "  "..tostring(n)
+  elseif n < 1000 then
+    return " "..tostring(n)
+  elseif n < 10000 then
+    return tostring(n)
+  elseif n < 100000 then
+    return " "..tostring(math.floor(n / 1000)).."K"
+  elseif n < 1000000 then
+    return tostring(math.floor(n / 1000)).."K"
   else
-    return true
+    return tostring(math.floor(n / 100000) / 10).."M"
   end
 end
 
 os.loadAPI("panel")
-local panelItems = panel.new{y=2, h=10}
-local panelSearch = panel.new{y=12, h=1}
+
+local panelSearch = panel.new{y=-1, h=-1}
+panelSearch:redirect()
+term.setBackgroundColor(colors.white)
+term.setTextColor(colors.black)
+term.clear()
+
+local panelStatus = panel.new{y=1, h=1}
+panelStatus:redirect()
+term.setBackgroundColor(colors.white)
+term.setTextColor(colors.black)
+term.clear()
+
+local panelItems = panel.new{y=2, h=-3}
+panelItems:redirect()
+term.setBackgroundColor(colors.black)
+term.setTextColor(colors.white)
+term.clear()
+
+local status = {
+ display = 4,
+ displayText = {" all  ", "stored", "craft ", " both "},
+ order = 1,
+ orderText = {"count", "name ", " id  "},
+ orderDir = 1,
+ orderDirText = {"desc", "asc "},
+ selected = 1,
+ page = 1,
+ pages = 1,
+ pageSize = term.getSize(),
+ searchTotal = 0,
+ focus = true,
+ idSelected = 1
+}
+
+function changeId(up)
+  panelItems:redirect()
+  term.setCursorPos(5, status.idSelected)
+  term.write(" ")
+  status.idSelected = rotate(status.idSelected, math.min(status.pageSize, status.searchTotal), up)
+  term.setCursorPos(5, status.idSelected)
+  term.write(">")
+end
 
 function listItems(text)
-  local sids = search(text)
-  table.sort(sids, sortTotal)
   panelItems:redirect()
-  local width, height = term.getSize()
-  term.clear()
-  for i = 1, math.min(sids and #sids or height, height - 1) do
-    local id = sids[i]
-    term.setCursorPos(1, i)
-    write(tostring(inv[id] and inv[id].total or 0))
-    write(" ")
-    write(ids[id])
+  local sids = search(text:lower())
+  if sids then
+    status.idSelected = 1
+    if status.display > 1 then
+      sids = filterBy(sids,
+                      status.display == 4 or status.display == 2,
+                      status.display == 4 or status.display == 3)
+    end
+    status.ids = sids
+    status.searchTotal = #sids
+    if status.order == 1 then
+      table.sort(sids, orderBy(inv, "total", status.orderDir == 1))
+    elseif status.order == 2 then
+      table.sort(sids, orderBy(ids, nil, status.orderDir == 1))
+    elseif status.order == 3 then
+      table.sort(sids)
+    end
+    local width, height = term.getSize()
+    term.clear()
+    for i = 1, math.min(sids and #sids or height, height) do
+      local id = sids[i]
+      term.setCursorPos(1, i)
+      write(formatNumber(inv[id] and inv[id].total or 0))
+      if not status.focus and status.idSelected == i then
+        write(">")
+      else
+        write(" ")
+      end
+      write(ids[id])
+    end
+  else
+    term.clear()
+    status.searchTotal = 0
+    status.idSelected = 0
   end
 end
 
-term.clear()
-listItems("")
-term.clear()
-listItems("")
-term.setCursorBlink(true)
-term.setCursorPos(1, 1)
-while true do
-  panelSearch:redirect()
-  local width = term.getSize()
-  local event, code = os.pullEvent()
-  if event == "char" then
-    text = text .. code
-    term.setCursorPos(#text, 1)
-    write(code)
-    listItems(text)
-  elseif event == "key" then
-    if code == keys.backspace then
-      term.setCursorPos(#text, 1)
+function rotate(n, max, decrement)
+  if decrement then
+    n = n - 1
+    if n < 1 then n = max end
+  else
+    n = n + 1
+    if n > max then n = 1 end
+  end
+  return n
+end
+
+function changeSelected(forward)
+  status.selected = rotate(status.selected, 3, forward)
+  showStatus()
+end
+
+function changeOption(up)
+  if status.selected == 1 then
+    status.display = rotate(status.display, 4, up)
+  elseif status.selected == 2 then
+    status.order = rotate(status.order, 3, up)
+  elseif status.selected == 3 then
+    status.orderDir = rotate(status.orderDir, 2, up)
+  end
+  showStatus()
+end
+
+function showStatus()
+  panelStatus:redirect()
+  write("status")
+  term.setCursorPos(1, 1)
+  for i = 1, 3 do
+    if status.focus and status.selected == i then
+      --term.setTextColor(colors.white)
+      write("<")
+    else
+      --term.setTextColor(colors.black)
       write(" ")
-      term.setCursorPos(#text, 1)
-      text = text:sub(1, #text - 1)
-      listItems(text)
-    elseif code == keys.delete then
-      term.setCursorPos(1, 1)
-      write(string.rep(" ", width))
-      term.setCursorPos(1, 1)
-      text = ""
-      listItems(text)
+    end
+    if i == 1 then
+      write(status.displayText[status.display])
+    elseif i == 2 then
+      write(status.orderText[status.order])
+    elseif i == 3 then
+      write(status.orderDirText[status.orderDir])
+    end
+    if status.focus and status.selected == i then
+      write(">")
+    else
+      write(" ")
     end
   end
+  term.setTextColor(colors.black)
+  write(" page")
+  write(formatNumber(status.page))
+  write(" of ")
+  write(formatNumber(status.pages))
 end
+
+function main()
+  showStatus()
+  local text = ""
+  panelItems:redirect()
+  term.clear()
+  listItems("")
+  term.setCursorBlink(true)
+  term.setCursorPos(1, 1)
+  while true do
+    panelSearch:redirect()
+    local width = term.getSize()
+    local event, code = os.pullEvent()
+    if event == "char" then
+      text = text .. code
+      term.setCursorPos(#text, 1)
+      write(code)
+      listItems(text)
+    elseif event == "key" then
+      if code == keys.backspace then
+        term.setCursorPos(#text, 1)
+        write(" ")
+        term.setCursorPos(#text, 1)
+        text = text:sub(1, #text - 1)
+        listItems(text)
+      elseif code == keys.delete then
+        term.setCursorPos(1, 1)
+        write(string.rep(" ", width))
+        term.setCursorPos(1, 1)
+        text = ""
+        listItems(text)
+      elseif code == keys.f5 then
+        unloadTurtle()
+        getInventory()
+        listItems(text)
+      elseif code == keys.left then
+        if status.focus then
+          changeSelected(true)
+        end
+      elseif code == keys.right then
+        if status.focus then
+          changeSelected(false)
+        end
+      elseif code == keys.up then
+        if status.focus then
+          changeOption(true)
+          listItems(text)
+        else
+          changeId(true)
+        end
+      elseif code == keys.down then
+        if status.focus then
+          changeOption(false)
+          listItems(text)
+        else
+          changeId(false)
+        end
+      elseif code == keys.tab then
+        status.focus = not status.focus
+        showStatus()
+      elseif code == keys.pageUp then
+      elseif code == keys.pageDown then
+      elseif code == keys.enter then
+        local id = status.ids[status.idSelected]
+        if inv[id] ~= nil and inv[id].total > 0 then
+          panelItems:redirect()
+          term.clear()
+          request(id, math.min(64, inv[id].total), {9})
+        end
+      end
+    end
+  end
+  term.restore()
+  term.clear()
+end
+
+main()
