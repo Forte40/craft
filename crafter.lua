@@ -5,6 +5,17 @@ add making multiples for speed
 add multiple direction logic
 add ui
 ]]
+
+local chestCapacity = {
+  chest = 27,
+  copper_chest = 45,
+  iron_chest = 54,
+  silver_chest = 72,
+  gold_chest = 81,
+  diamond_chest = 108,
+  ender_chest = 27
+}
+
 function tprint (tbl, indent, max)
   if not max then max = 12 end
   if not indent then indent = 0 end
@@ -28,7 +39,8 @@ function tprint (tbl, indent, max)
   end
 end
 
-local s, w, dir
+local s, w, dir, capacity
+
 local chests = {}
 for _, side in ipairs(peripheral.getNames()) do
   if peripheral.getType(side) == "interactiveSorter" then
@@ -46,6 +58,22 @@ if not s then
 end
 
 function initialize()
+  if fs.exists(".crafter.capacity") then
+    local f = fs.open(".crafter.capacity", "r")
+    local d = textutils.unserialize(f.readAll())
+    f.close()
+    capacity = d
+  else
+    print("Assuming single wooden chests")
+    print("  edit .crafter.capacity to upgrade chest sizes")
+    print()
+    print("press [Enter] to continue...")
+    capacity = {[0]=27, [1]=27, [2]=27, [3]=27, [4]=27, [5]=27}
+    local f = fs.open(".crafter.capacity", "w")
+    f.write(textutils.serialize(capacity))
+    f.close()
+    read()
+  end
   if fs.exists(".crafter.direction") then
     local f = fs.open(".crafter.direction", "r")
     local d = tonumber(f.readAll())
@@ -55,12 +83,12 @@ function initialize()
     print("Initializing Crafter")
     print("  please empty the system and")
     print("  put items in the turtle")
-    print("  then hit enter")
+    print("  then press [Enter] to continue...")
     io.read()
     for i = 0, 5 do
       local l = s.list(i)
       if l then
-        tprint(l)
+        --tprint(l)
         if not (next(l) == nil) then
           local f = fs.open(".crafter.direction", "w")
           f.write(i)
@@ -82,12 +110,14 @@ function initialize()
 end
 
 local gtrie = {}
+local names = {[""] = 0}
 function addString(s, id)
+  names[s] = id
   s = s:lower()
   for i = 1, #s do
     addTrie(s:sub(i), id, gtrie)
   end
-  table.insert(gtrie, id)
+  gtrie[id] = true
 end
 
 function addTrie(s, id, trie)
@@ -96,37 +126,50 @@ function addTrie(s, id, trie)
   end
   local c = s:sub(1,1)
   if trie[c] then
-    local found = false
-    for _, existingID in ipairs(trie[c]) do
-      if existingID == id then
-        found = true
-        break
-      end
-    end
-    if not found then
-      table.insert(trie[c], id)
-    end
+    trie[id] = true
   else
     trie[c] = {id}
   end
   addTrie(s:sub(2), id, trie[c])
 end
 
+function getMeta(uuid)
+  if type(uuid) == "number" then
+    return uuid%32768, math.floor(uuid/32768)
+  elseif type(uuid) == "string" then
+    local pos = uuid:find(":")
+    local uuidmeta = tonumber(uuid:sub(pos+1))
+    uuid = tonumber(uuid:sub(1, pos-1))
+    print(uuid, uuidmeta)
+    return uuid, uuidmeta
+  end
+end
+
+function getId(id, meta)
+  return meta * 32768 + id
+end
+
 io.write("loading ids...")
 local count = 0
 local ids = {}
-local names = {[""] = 0}
 for _, idfile in ipairs(fs.list("ids")) do
   idfile = fs.combine("ids", idfile)
   if not fs.isDir(idfile) then
     local f = fs.open(idfile, "r")
     local data = f.readAll()
     f.close()
-    ids = textutils.unserialize(data)
-    for id, name in pairs(ids) do
+    local lids = textutils.unserialize(data)
+    for uuid, name in pairs(lids) do
+      local id, meta = getMeta(uuid)
+      uuid, uuidmeta = getId(id, meta)
+      local stackSize = 64
+      if type(name) == "table" then
+        name, stackSize = unpack(name)
+      end
+      ids[uuid] = {name=name, stackSize=stackSize}
       count = count + 1
-      addString(name, id)
-      names[name] = id
+      addString(name, uuid)
+      addString(tonumber(id)..":"..tonumber(meta), uuid)
     end
   end
 end
@@ -164,16 +207,22 @@ print(count)
 
 local inv = {}
 
-function idAdd(id, amount, direction)
-  if inv[id] then
-    if inv[id].amount[direction] then
-      inv[id].amount[direction] = inv[id].amount[direction] + amount
+function idAdd(uuid, amount, direction)
+  if ids[uuid] == nil then
+    local id, meta = getMeta(uuid)
+    local name = tostring(id)..":"..tostring(meta)
+    ids[uuid] = {name=name, stackSize=64}
+    addString(name, uuid)
+  end
+  if inv[uuid] then
+    if inv[uuid].amount[direction] then
+      inv[uuid].amount[direction] = inv[uuid].amount[direction] + amount
     else
-      inv[id].amount[direction] = amount
+      inv[uuid].amount[direction] = amount
     end
-    inv[id].total = inv[id].total + amount
+    inv[uuid].total = inv[uuid].total + amount
   else
-    inv[id] = {id=id%32768, meta=math.floor(id/32786),amount={[direction]=amount},total=amount}
+    inv[uuid] = {id=uuid%32768, meta=math.floor(uuid/32768),amount={[direction]=amount},total=amount}
   end
 end
 
@@ -223,21 +272,21 @@ function verify(id, amount)
 end
 
 function request(id, amount, slots)
-  print("requesting "..amount.." "..ids[id].." in "..textutils.serialize(slots))
+  --print("requesting "..amount.." "..ids[id].name.." in "..textutils.serialize(slots))
   local total = amount * #slots
   print(total)
   if not inv[id] then
-    print("do not have "..ids[id])
+    print("do not have "..ids[id].name)
   elseif inv[id].total < total then
-    print("need more "..ids[id])
+    print("need more "..ids[id].name)
   else
     turtle.select(1)
     for i, slot in ipairs(slots) do
-      print("slot", slot)
-      tprint(inv[id].amount)
+      --print("slot", slot)
+      --tprint(inv[id].amount)
       for direction, count in pairs(inv[id].amount) do
         if count >= amount then
-          print("extracting")
+          --print("extracting")
           s.extract(direction, id, dir, amount)
           idSub(id, amount, direction)
           turtle.transferTo(craftSlot[slot])
@@ -265,11 +314,11 @@ end
 
 function make(id, amount)
   amount = amount or 1
-  print("making "..tostring(amount).." "..ids[id])
+  print("making "..tostring(amount).." "..ids[id].name)
   local r = recipes[id]
-  tprint(r)
+  --tprint(r)
   if not r then
-    print("can't make "..ids[id]..", no recipe")
+    print("can't make "..ids[id].name..", no recipe")
     return false
   end
   amount = math.ceil(amount / r.yield)
@@ -287,7 +336,7 @@ function make(id, amount)
     local needed = verify(mid, amount * #slots)
     if needed > 0 then
       if not make(mid, needed) then
-        print("can't make "..ids[id]..", need "..needed.." "..ids[mid])
+        print("can't make "..ids[id].name..", need "..needed.." "..ids[mid].name)
         return false
       end
     end
@@ -296,7 +345,7 @@ function make(id, amount)
     local currAmount = amount > 64 and 64 or amount
     amount = amount - 64
     for mid, slots in pairs(mat) do
-      request(mid, amount, slots)
+      request(mid, currAmount, slots)
     end
     turtle.select(1)
     turtle.craft()
@@ -338,14 +387,6 @@ end
 initialize()
 getInventory()
 unloadTurtle()
-local name = ...
-if name then
-  for _, id in ipairs(search(name:lower())) do
-    local count = inv[id] or 0
-    print(ids[id].." = "..count)
-  end
-end
---make(54, 8)
 
 function orderBy(lookup, prop, descending, default)
   lookup = lookup or inv
@@ -364,10 +405,14 @@ function orderBy(lookup, prop, descending, default)
   end
 end
 
-function filterBy(list, stored, craft)
+function filterBy(list, display)
   local fids = {}
-  for _, id in ipairs(list) do
-    if (craft and recipes[id] ~= nil) or (stored and inv[id] ~= nil and inv[id].total > 0) then
+  for id in pairs(list) do
+    if type(id) == "number" and (
+        display == 1 or
+        (display == 3 or display == 4 and recipes[id] ~= nil) or
+        (display == 2 or display == 4 and inv[id] ~= nil and inv[id].total > 0)
+        ) then
       table.insert(fids, id)
     end
   end
@@ -416,7 +461,7 @@ local status = {
  display = 4,
  displayText = {" all  ", "stored", "craft ", " both "},
  order = 1,
- orderText = {"count", "name ", " id  "},
+ orderText = {"count", "name ", " id  ", "stack"},
  orderDir = 1,
  orderDirText = {"desc", "asc "},
  selected = 1,
@@ -442,19 +487,17 @@ function listItems(text)
   local sids = search(text:lower())
   if sids then
     status.idSelected = 1
-    if status.display > 1 then
-      sids = filterBy(sids,
-                      status.display == 4 or status.display == 2,
-                      status.display == 4 or status.display == 3)
-    end
+    sids = filterBy(sids, status.display)
     status.ids = sids
     status.searchTotal = #sids
     if status.order == 1 then
       table.sort(sids, orderBy(inv, "total", status.orderDir == 1))
     elseif status.order == 2 then
-      table.sort(sids, orderBy(ids, nil, status.orderDir == 1))
+      table.sort(sids, orderBy(ids, "name", status.orderDir == 1))
     elseif status.order == 3 then
       table.sort(sids)
+    elseif status.order == 4 then
+      table.sort(sids, orderBy(ids, "stackSize", status.orderDir == 1))
     end
     local width, height = term.getSize()
     term.clear()
@@ -467,7 +510,7 @@ function listItems(text)
       else
         write(" ")
       end
-      write(ids[id])
+      write(ids[id].name)
     end
   else
     term.clear()
@@ -494,11 +537,11 @@ end
 
 function changeOption(up)
   if status.selected == 1 then
-    status.display = rotate(status.display, 4, up)
+    status.display = rotate(status.display, #status.displayText, up)
   elseif status.selected == 2 then
-    status.order = rotate(status.order, 3, up)
+    status.order = rotate(status.order, #status.orderText, up)
   elseif status.selected == 3 then
-    status.orderDir = rotate(status.orderDir, 2, up)
+    status.orderDir = rotate(status.orderDir, #status.orderDirText, up)
   end
   showStatus()
 end
@@ -598,11 +641,26 @@ function main()
       elseif code == keys.pageDown then
       elseif code == keys.enter then
         local id = status.ids[status.idSelected]
-        if inv[id] ~= nil and inv[id].total > 0 then
-          panelItems:redirect()
+        local count = 64
+        if inv[id] == nil or inv[id].total == nil or inv[id].total < 0 then
+          panelSearch:redirect()
           term.clear()
-          request(id, math.min(64, inv[id].total), {9})
+          write("How many? ")
+          count = tonumber(read())
+          count = count or 1
+          if count then
+            panelItems:redirect()
+            term.clear()
+            if not make(id, count) then
+              print("press [Enter] to continue...")
+              read()
+            end
+          end
         end
+        if inv[id] ~= nil and inv[id].total > 0 then
+          request(id, math.min(count, inv[id].total), {7})
+        end
+        listItems(text)
       end
     end
   end
