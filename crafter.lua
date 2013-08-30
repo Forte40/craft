@@ -6,6 +6,36 @@ add multiple direction logic
 add ui
 ]]
 
+function serialize(o, indent)
+  local s = ""
+  indent = indent or ""
+  if type(o) == "number" then
+    s = s .. indent .. tostring(o)
+  elseif type(o) == "boolean" then
+    s = s .. indent .. (o and "true" or "false")
+  elseif type(o) == "string" then
+    if o:find("\n") then
+      s = s .. indent .. "[[\n" .. o:gsub("\"", "\\\"") .. "]]"
+    else
+      s = s .. indent .. string.format("%q", o)
+    end
+  elseif type(o) == "table" then
+    s = s .. "{\n"
+    for k,v in pairs(o) do
+      if type(v) == "table" then
+        s = s .. indent .. "  [" .. serialize(k) .. "] = " .. serialize(v, indent .. "  ") .. ",\n"
+      else
+        s = s .. indent .. "  [" .. serialize(k) .. "] = " .. serialize(v) .. ",\n"
+      end
+    end
+    s = s .. indent .. "}"
+  else
+    s = s .. indent .. "nil"
+    --error("cannot serialize a " .. type(o))
+  end
+  return s
+end
+
 local chestCapacity = {
   chest = 27,
   copper_chest = 45,
@@ -39,7 +69,7 @@ function tprint (tbl, indent, max)
   end
 end
 
-local s, w, dir, capacity
+local s, w, turtleDirection, capacity
 
 local chests = {}
 for _, side in ipairs(peripheral.getNames()) do
@@ -78,7 +108,7 @@ function initialize()
     local f = fs.open(".crafter.direction", "r")
     local d = tonumber(f.readAll())
     f.close()
-    dir = d
+    turtleDirection = d
   else
     print("Initializing Crafter")
     print("  please empty the system and")
@@ -93,14 +123,14 @@ function initialize()
           local f = fs.open(".crafter.direction", "w")
           f.write(i)
           f.close()
-          dir = i
+          turtleDirection = i
           break
         end
       end
     end
   end
   for i = 0, 5 do
-    if i ~= dir then
+    if i ~= turtleDirection then
       local l = s.list(i)
       if l then
         table.insert(chests, i)
@@ -111,65 +141,112 @@ end
 
 local gtrie = {}
 local names = {[""] = 0}
-function addString(s, id)
-  names[s] = id
+function addString(s, uuid)
+  names[s] = uuid
   s = s:lower()
   for i = 1, #s do
-    addTrie(s:sub(i), id, gtrie)
+    addTrie(s:sub(i), uuid, gtrie)
   end
-  gtrie[id] = true
+  gtrie[uuid] = true
+  return s
 end
 
-function addTrie(s, id, trie)
+function addTrie(s, uuid, trie)
   if s == "" then
     return
   end
   local c = s:sub(1,1)
   if trie[c] then
-    trie[id] = true
+    trie[c][uuid] = true
   else
-    trie[c] = {id}
+    trie[c] = {[uuid]=true}
   end
-  addTrie(s:sub(2), id, trie[c])
+  addTrie(s:sub(2), uuid, trie[c])
 end
 
-function getMeta(uuid)
+function getIdMeta(uuid)
   if type(uuid) == "number" then
     return uuid%32768, math.floor(uuid/32768)
   elseif type(uuid) == "string" then
     local pos = uuid:find(":")
-    local uuidmeta = tonumber(uuid:sub(pos+1))
-    uuid = tonumber(uuid:sub(1, pos-1))
-    print(uuid, uuidmeta)
-    return uuid, uuidmeta
+    if pos then
+      local uuidmeta = tonumber(uuid:sub(pos+1))
+      uuid = tonumber(uuid:sub(1, pos-1))
+      return uuid, uuidmeta
+    else
+      return nil
+    end
   end
 end
 
-function getId(id, meta)
+function getUuid(id, meta)
   return meta * 32768 + id
 end
 
-io.write("loading ids...")
+io.write("loading items...")
 local count = 0
 local ids = {}
-for _, idfile in ipairs(fs.list("ids")) do
-  idfile = fs.combine("ids", idfile)
-  if not fs.isDir(idfile) then
-    local f = fs.open(idfile, "r")
-    local data = f.readAll()
-    f.close()
-    local lids = textutils.unserialize(data)
-    for uuid, name in pairs(lids) do
-      local id, meta = getMeta(uuid)
-      uuid, uuidmeta = getId(id, meta)
-      local stackSize = 64
-      if type(name) == "table" then
-        name, stackSize = unpack(name)
+local f = fs.open("item.dat", "r")
+local data = f.readAll()
+f.close()
+local lids = textutils.unserialize(data)
+for uuid, name in pairs(lids) do
+  count = count + 1
+  -- pause execution to prevent "Too long without yielding"
+  if count % 1000 == 0 then
+    os.queueEvent("crafter")
+    os.pullEvent("crafter")
+  end
+  local id, meta = getIdMeta(uuid)
+  uuid = getUuid(id, meta)
+  -- add list of sub items to item with meta = 0
+  if meta > 0 and ids[id] then
+    if ids[id].subUuids then
+      table.insert(ids[id].subUuids, uuid)
+    else
+      ids[id].subUuids = {id, uuid}
+    end
+  end
+  local stackSize = 64
+  if type(name) == "table" then
+    name, stackSize = unpack(name)
+  else
+    if name:find("urnace") then
+      print(tonumber(id)..":"..tonumber(meta))
+      print(name)
+      read()
+    end
+  end
+  addString(name, uuid)
+  addString(tonumber(id)..":"..tonumber(meta), uuid)
+  ids[uuid] = {name=name, stackSize=stackSize}
+end
+print(count)
+
+io.write("loading dictionary...")
+local count = 0
+local dictionary = {}
+local f = fs.open("dictionary.dat", "r")
+local data = f.readAll()
+f.close()
+local ores = textutils.unserialize(data)
+for name, uuids in pairs(ores) do
+  count = count + 1
+  dictionary[name] = {}
+  for _, uuid in ipairs(uuids) do
+    local id, meta = getIdMeta(uuid)
+    if meta == 32767 then
+      -- all meta ids apply to this ore
+      if ids[id] and ids[id].subUuids then
+        for _, subUuid in ipairs(ids[id].subUuids) do
+          table.insert(dictionary[name], subUuid)
+        end
+      else
+        table.insert(dictionary[name], id)
       end
-      ids[uuid] = {name=name, stackSize=stackSize}
-      count = count + 1
-      addString(name, uuid)
-      addString(tonumber(id)..":"..tonumber(meta), uuid)
+    else
+      uuid = getUuid(id, meta)
+      table.insert(dictionary[name], uuid)
     end
   end
 end
@@ -178,28 +255,47 @@ print(count)
 io.write("loading recipes...")
 local count = 0
 local recipes = {}
-for _, recipefile in ipairs(fs.list("recipe")) do
-  recipefile = fs.combine("recipe", recipefile)
-  if not fs.isDir(recipefile) then
-    local f = fs.open(recipefile, "r")
-    local data = f.readAll()
-    f.close()
-    local rs = textutils.unserialize(data)
-    for name, items in pairs(rs) do
-      count = count + 1
-      if not names[name] then
-        error("unknown item name "..name.." in recipe "..name)
-      else
-        local r = {yield = table.remove(items, 1)}
-        recipes[names[name]] = r
-        for i, item in ipairs(items) do
-          if not names[item] then
-            error("unknown item name "..item.." in recipe "..name)
+local f = fs.open("recipe.dat", "r")
+local data = f.readAll()
+f.close()
+local craftings = textutils.unserialize(data)
+for outputUuid, inputUuids in pairs(craftings) do
+  count = count + 1
+  -- pause execution to prevent "Too long without yielding"
+  if count % 1000 == 0 then
+    os.queueEvent("crafter")
+    os.pullEvent("crafter")
+  end
+  local recipe = {yield = table.remove(inputUuids, 1)}
+  local id, meta = getIdMeta(outputUuid)
+  outputUuid = getUuid(id, meta)
+  recipes[outputUuid] = recipe
+  for _, inputUuid in ipairs(inputUuids) do
+    if inputUuid and inputUuid ~= "" then
+      id, meta = getIdMeta(inputUuid)
+      if id then
+        if meta == 32767 then
+          local idEntry = ids[id]
+          if idEntry and idEntry.subUuids then
+            -- add dictionary entries
+            dictionary[idEntry.name] = {}
+            for _, subUuid in ipairs(idEntry.subUuids) do
+              table.insert(dictionary[idEntry.name], subUuid)
+            end
+            table.insert(recipe, idEntry.name)
           else
-            table.insert(r, names[item])
+            table.insert(recipe, id)
           end
+        else
+          local uuid = getUuid(id, meta)
+          table.insert(recipe, uuid)
         end
+      else
+        -- ore dictionary entry
+        table.insert(recipe, inputUuid)
       end
+    else
+      table.insert(recipe, 0)
     end
   end
 end
@@ -207,9 +303,34 @@ print(count)
 
 local inv = {}
 
+function idPutBest(uuid, amount)
+  if inv[uuid] then
+    local bestDir, highAmount = 0, 0
+    for direction, amount in pairs(inv[uuid].amount) do
+      if amount > highAmount then
+        bestDir = direction
+        highAmount = amount
+      end
+    end
+    idPut(uuid, amount, bestDir)
+  else
+    for _, direction in ipairs(chests) do
+      idPut(uuid, amount, direction)
+    end
+  end
+end
+
+function idPut(uuid, amount, direction)
+  s.extract(turtleDirection, uuid, direction, amount)
+  idAdd(uuid, amount, direction)
+end
+
 function idAdd(uuid, amount, direction)
+  if direction == turtleDirection then
+    return
+  end
   if ids[uuid] == nil then
-    local id, meta = getMeta(uuid)
+    local id, meta = getIdMeta(uuid)
     local name = tostring(id)..":"..tostring(meta)
     ids[uuid] = {name=name, stackSize=64}
     addString(name, uuid)
@@ -224,6 +345,11 @@ function idAdd(uuid, amount, direction)
   else
     inv[uuid] = {id=uuid%32768, meta=math.floor(uuid/32768),amount={[direction]=amount},total=amount}
   end
+end
+
+function idGet(uuid, amount, direction)
+  s.extract(direction, uuid, turtleDirection, amount)
+  idSub(uuid, amount, direction)
 end
 
 function idSub(id, amount, direction)
@@ -262,63 +388,78 @@ local craftSlot = {[1] = 5,
                    [9] = 15}
 
 function verify(id, amount)
-  if not inv[id] then
-    return amount
-  elseif inv[id].total < amount then
-    return amount - inv[id].total
+  local needed = amount
+  local vids
+  if type(id) == "string" then
+    vids = dictionary[id]
   else
-    return 0
+    vids = {id}
   end
+  if vids then
+    for _, vid in ipairs(vids) do
+      if inv[vid] then
+        needed = needed - inv[vid].total
+      end
+    end
+  end
+  return math.max(0, needed)
 end
 
 function request(id, amount, slots)
-  --print("requesting "..amount.." "..ids[id].name.." in "..textutils.serialize(slots))
+  --[[
+  if type(id) == "string" then
+    print("requesting "..amount.." "..id.." in "..textutils.serialize(slots))
+  else
+    print("requesting "..amount.." "..ids[id].name.." in "..textutils.serialize(slots))
+  end
+  ]]
   local total = amount * #slots
-  print(total)
-  if not inv[id] then
-    print("do not have "..ids[id].name)
-  elseif inv[id].total < total then
-    print("need more "..ids[id].name)
+  local needed = verify(id, total)
+  if needed > 0 then
+    if type(id) == "string" then
+      print("need more "..id)
+    else
+      print("need more "..ids[id].name)
+    end
+    return false
   else
     turtle.select(1)
+    -- fill 1 slot at a time
     for i, slot in ipairs(slots) do
-      --print("slot", slot)
-      --tprint(inv[id].amount)
-      for direction, count in pairs(inv[id].amount) do
-        if count >= amount then
-          --print("extracting")
-          s.extract(direction, id, dir, amount)
-          idSub(id, amount, direction)
-          turtle.transferTo(craftSlot[slot])
-          break
+      if type(id) == "string" then
+        local ores = dictionary[id]
+        for _, ore in ipairs(ores) do
+          if verify(ore, amount) <= 0 then
+            if request(ore, amount, {slot}) then
+              break
+            end
+          end
+        end
+      else
+        for direction, count in pairs(inv[id].amount) do
+          if count >= amount then
+            idGet(id, amount, direction)
+            turtle.transferTo(craftSlot[slot])
+            break
+          end
         end
       end
     end
+    return true
   end
 end
 
-function getDirection(id)
-  if inv[id] then
-    for direction, count in pairs(inv[id].amount) do
-      if count > 0 then
-        return direction
-      end
-    end
-  end
-  for _, direction in ipairs(chests) do
-    if direction ~= dir then
-      return direction
-    end
-  end
-end
-
-function make(id, amount)
+function make(uuid, amount, makeStack)
+  makeStack = makeStack or {}
+  makeStack[uuid] = true
   amount = amount or 1
-  print("making "..tostring(amount).." "..ids[id].name)
-  local r = recipes[id]
-  --tprint(r)
+  if not ids[uuid] then
+    return false
+  end
+  print("making "..tostring(amount).." "..ids[uuid].name)
+  local r = recipes[uuid]
   if not r then
-    print("can't make "..ids[id].name..", no recipe")
+    print("can't make "..ids[uuid].name..", no recipe")
     return false
   end
   amount = math.ceil(amount / r.yield)
@@ -335,9 +476,29 @@ function make(id, amount)
   for mid, slots in pairs(mat) do
     local needed = verify(mid, amount * #slots)
     if needed > 0 then
-      if not make(mid, needed) then
-        print("can't make "..ids[id].name..", need "..needed.." "..ids[mid].name)
-        return false
+      if type(mid) == "string" then
+        print("making "..needed.." "..mid)
+        local made = false
+        local ores = dictionary[mid]
+        for _, ore in ipairs(ores) do
+          if not makeStack[ore] and make(ore, needed, makeStack) then
+            made = true
+            break
+          end
+        end
+        if not made then
+          print("can't make "..ids[uuid].name..", need "..needed.." "..mid)
+          return false
+        end
+      else
+        if makeStack[mid] or not make(mid, needed, makeStack) then
+          if ids[mid] then
+            print("can't make "..ids[uuid].name..", need "..needed.." "..ids[mid].name)
+          else
+            print("can't make "..ids[uuid].name..", need "..needed.." "..tostring(mid))
+          end
+          return false
+        end
       end
     end
   end
@@ -350,25 +511,15 @@ function make(id, amount)
     turtle.select(1)
     turtle.craft()
     local count = turtle.getItemCount(1)
-    local direction = getDirection(id)
-    s.extract(dir, id, direction, count)
-    idAdd(id, count, direction)
+    idPutBest(uuid, count)
   end
   return true
 end
 
 function unloadTurtle()
-  local items = s.list(dir)
-  for id, amount in pairs(items) do
-    if inv[id] and inv[id].direction then
-      s.extract(dir, id, inv[id].direction, amount)
-    else
-      for _, direction in ipairs(chests) do
-        if s.extract(dir, id, direction, amount) then
-          break
-        end
-      end
-    end
+  local items = s.list(turtleDirection)
+  for uuid, amount in pairs(items) do
+    idPutBest(uuid, amount)
   end
 end
 
@@ -407,13 +558,13 @@ end
 
 function filterBy(list, display)
   local fids = {}
-  for id in pairs(list) do
-    if type(id) == "number" and (
+  for uuid in pairs(list) do
+    if type(uuid) == "number" and (
         display == 1 or
-        (display == 3 or display == 4 and recipes[id] ~= nil) or
-        (display == 2 or display == 4 and inv[id] ~= nil and inv[id].total > 0)
+        ((display == 3 or display == 4) and recipes[uuid] ~= nil) or
+        ((display == 2 or display == 4) and inv[uuid] ~= nil and inv[uuid].total > 0)
         ) then
-      table.insert(fids, id)
+      table.insert(fids, uuid)
     end
   end
   return fids
@@ -456,6 +607,7 @@ panelItems:redirect()
 term.setBackgroundColor(colors.black)
 term.setTextColor(colors.white)
 term.clear()
+local width, height = term.getSize()
 
 local status = {
  display = 4,
@@ -465,31 +617,40 @@ local status = {
  orderDir = 1,
  orderDirText = {"desc", "asc "},
  selected = 1,
- page = 1,
- pages = 1,
- pageSize = term.getSize(),
+ focus = false,
  searchTotal = 0,
- focus = true,
- idSelected = 1
+ idViewed = 1,
+ idSelected = 1,
+ pageSize = height,
 }
 
 function changeId(up)
   panelItems:redirect()
-  term.setCursorPos(5, status.idSelected)
+  term.setCursorPos(5, status.idSelected - status.idViewed + 1)
   term.write(" ")
-  status.idSelected = rotate(status.idSelected, math.min(status.pageSize, status.searchTotal), up)
-  term.setCursorPos(5, status.idSelected)
+  if status.idSelected > 1 and up then
+    status.idSelected = status.idSelected - 1
+  elseif status.idSelected < status.searchTotal and not up then
+    status.idSelected = status.idSelected + 1
+  end
+  if status.idSelected < status.idViewed then
+    status.idViewed = status.idSelected
+    listItems()
+  elseif status.idSelected > (status.idViewed + status.pageSize - 1) then
+    status.idViewed = math.min(status.searchTotal - status.pageSize + 1, status.idSelected)
+    listItems()
+  end
+  term.setCursorPos(5, status.idSelected - status.idViewed + 1)
   term.write(">")
+  showStatus()
 end
 
-function listItems(text)
-  panelItems:redirect()
+function searchItems(text)
   local sids = search(text:lower())
   if sids then
     status.idSelected = 1
+    status.idViewed = 1
     sids = filterBy(sids, status.display)
-    status.ids = sids
-    status.searchTotal = #sids
     if status.order == 1 then
       table.sort(sids, orderBy(inv, "total", status.orderDir == 1))
     elseif status.order == 2 then
@@ -499,13 +660,25 @@ function listItems(text)
     elseif status.order == 4 then
       table.sort(sids, orderBy(ids, "stackSize", status.orderDir == 1))
     end
+    status.ids = sids
+    status.searchTotal = #sids
+  else
+    status.ids = nil
+  end
+  listItems()
+  showStatus()
+end
+
+function listItems()
+  panelItems:redirect()
+  if status.ids then
     local width, height = term.getSize()
     term.clear()
-    for i = 1, math.min(sids and #sids or height, height) do
-      local id = sids[i]
-      term.setCursorPos(1, i)
+    for i = status.idViewed, status.idViewed + math.min(#status.ids, status.pageSize) - 1 do
+      local id = status.ids[i]
+      term.setCursorPos(1, i - status.idViewed + 1)
       write(formatNumber(inv[id] and inv[id].total or 0))
-      if not status.focus and status.idSelected == i then
+      if status.idSelected == i then
         write(">")
       else
         write(" ")
@@ -548,7 +721,6 @@ end
 
 function showStatus()
   panelStatus:redirect()
-  write("status")
   term.setCursorPos(1, 1)
   for i = 1, 3 do
     if status.focus and status.selected == i then
@@ -572,10 +744,10 @@ function showStatus()
     end
   end
   term.setTextColor(colors.black)
-  write(" page")
-  write(formatNumber(status.page))
+  write(" item")
+  write(formatNumber(status.idSelected))
   write(" of ")
-  write(formatNumber(status.pages))
+  write(formatNumber(status.searchTotal))
 end
 
 function main()
@@ -583,7 +755,7 @@ function main()
   local text = ""
   panelItems:redirect()
   term.clear()
-  listItems("")
+  searchItems("")
   term.setCursorBlink(true)
   term.setCursorPos(1, 1)
   while true do
@@ -594,24 +766,24 @@ function main()
       text = text .. code
       term.setCursorPos(#text, 1)
       write(code)
-      listItems(text)
+      searchItems(text)
     elseif event == "key" then
       if code == keys.backspace then
         term.setCursorPos(#text, 1)
         write(" ")
         term.setCursorPos(#text, 1)
         text = text:sub(1, #text - 1)
-        listItems(text)
+        searchItems(text)
       elseif code == keys.delete then
         term.setCursorPos(1, 1)
         write(string.rep(" ", width))
         term.setCursorPos(1, 1)
         text = ""
-        listItems(text)
+        searchItems(text)
       elseif code == keys.f5 then
         unloadTurtle()
         getInventory()
-        listItems(text)
+        searchItems(text)
       elseif code == keys.left then
         if status.focus then
           changeSelected(true)
@@ -623,14 +795,14 @@ function main()
       elseif code == keys.up then
         if status.focus then
           changeOption(true)
-          listItems(text)
+          searchItems(text)
         else
           changeId(true)
         end
       elseif code == keys.down then
         if status.focus then
           changeOption(false)
-          listItems(text)
+          searchItems(text)
         else
           changeId(false)
         end
@@ -656,6 +828,9 @@ function main()
               read()
             end
           end
+          panelSearch:redirect()
+          term.clear()
+          write(text)
         end
         if inv[id] ~= nil and inv[id].total > 0 then
           request(id, math.min(count, inv[id].total), {7})
