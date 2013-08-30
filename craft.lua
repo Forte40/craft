@@ -86,6 +86,11 @@ if not s then
   print("Program needs an interactive sorter")
   return
 end
+if not fs.exists("item.dat") then
+  print("Please install the relevant dat files")
+  print("Type 'craft-get list' to see what is available")
+  return
+end
 
 function initialize()
   if fs.exists(".crafter.capacity") then
@@ -210,12 +215,6 @@ for uuid, name in pairs(lids) do
   local stackSize = 64
   if type(name) == "table" then
     name, stackSize = unpack(name)
-  else
-    if name:find("urnace") then
-      print(tonumber(id)..":"..tonumber(meta))
-      print(name)
-      read()
-    end
   end
   addString(name, uuid)
   addString(tonumber(id)..":"..tonumber(meta), uuid)

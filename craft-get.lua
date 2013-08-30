@@ -12,7 +12,6 @@ local files = {
   },
   {
     name = "craft",
-    folder = "apis",
     url = "https://raw.github.com/Forte40/craft/"..branch.."/craft.lua"
   },
   {
