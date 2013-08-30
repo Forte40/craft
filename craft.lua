@@ -588,7 +588,7 @@ function formatNumber(n)
   end
 end
 
-os.loadAPI("panel")
+os.loadAPI("apis/panel")
 
 local panelSearch = panel.new{y=-1, h=-1}
 panelSearch:redirect()
