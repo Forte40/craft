@@ -405,6 +405,25 @@ function verify(id, amount)
   return math.max(0, needed)
 end
 
+function consolidate(uuid)
+  if inv[uuid] and inv[uuid].total > 0 then
+    local bestDir, highAmount = 0, 0
+    for direction, count in pairs(inv[uuid].amount) do
+      if count > highAmount then
+        highAmount = count
+        bestDir = direction
+      end
+    end
+    for direction, count in pairs(inv[uuid].amount) do
+      if direction ~= bestDir then
+        s.extract(direction, uuid, bestDir, count)
+        inv[uuid].amount[direction] = nil
+        inv[uuid].amount[bestDir] = inv[uuid].amount[bestDir] + count
+      end
+    end
+  end
+end
+
 function request(id, amount, slots)
   --[[
   if type(id) == "string" then
@@ -436,6 +455,7 @@ function request(id, amount, slots)
           end
         end
       else
+        consolidate(id)
         for direction, count in pairs(inv[id].amount) do
           if count >= amount then
             idGet(id, amount, direction)
@@ -821,7 +841,7 @@ function main()
       elseif code == keys.enter then
         local id = status.ids[status.idSelected]
         local count = 64
-        if inv[id] == nil or inv[id].total == nil or inv[id].total < 0 then
+        if inv[id] == nil or inv[id].total == nil or inv[id].total <= 0 then
           panelSearch:redirect()
           term.clear()
           write("How many? ")
