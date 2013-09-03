@@ -475,20 +475,19 @@ function make(uuid, amount, makeStack)
   end
   local maxStack = item.stackSize
   for mid, slots in pairs(mat) do
-    maxStack = math.min(ids[mid].stackSize, maxStack)
     local needed = verify(mid, amount * #slots)
     if needed > 0 then
       if type(mid) == "string" then
         print("making "..needed.." "..mid)
-        local made = false
+        local made = nil
         local ores = dictionary[mid]
         for _, ore in ipairs(ores) do
           if not makeStack[ore] and make(ore, needed, makeStack) then
-            made = true
+            made = ore
             break
           end
         end
-        if not made then
+        if made == nil then
           print("can't make "..item.name..", need "..needed.." "..mid)
           return false
         end
@@ -502,6 +501,11 @@ function make(uuid, amount, makeStack)
           return false
         end
       end
+    end
+    if type(mid) == "number" then
+      maxStack = math.min(ids[mid].stackSize, maxStack)
+    elseif made ~= nil then
+      maxStack = math.min(ids[made].stackSize, maxStack)
     end
   end
   while amount > 0 do
