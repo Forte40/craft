@@ -116,15 +116,15 @@ function initialize()
     turtleDirection = d
   else
     print("Initializing Crafter")
-    print("  please empty the system and")
-    print("  put items in the turtle")
+    print("  please empty the turtle and")
+    print("  put items each chest,")
     print("  then press [Enter] to continue...")
     io.read()
     for i = 0, 5 do
       local l = s.list(i)
       if l then
         --tprint(l)
-        if not (next(l) == nil) then
+        if (next(l) == nil) then
           local f = fs.open(".crafter.direction", "w")
           f.write(i)
           f.close()
@@ -302,7 +302,7 @@ print(count)
 
 local inv = {}
 
-function idPutBest(uuid, amount)
+function idPutBest(uuid, count)
   if inv[uuid] then
     local bestDir, highAmount = 0, 0
     for direction, amount in pairs(inv[uuid].amount) do
@@ -311,10 +311,11 @@ function idPutBest(uuid, amount)
         highAmount = amount
       end
     end
-    idPut(uuid, amount, bestDir)
+    idPut(uuid, count, bestDir)
   else
     for _, direction in ipairs(chests) do
       idPut(uuid, amount, direction)
+      break
     end
   end
 end
@@ -509,7 +510,7 @@ function make(uuid, amount, makeStack)
     end
   end
   while amount > 0 do
-    local currAmount = math.max(amount, maxStack)
+    local currAmount = math.min(amount, maxStack)
     for mid, slots in pairs(mat) do
       request(mid, currAmount, slots)
     end
