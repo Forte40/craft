@@ -449,16 +449,17 @@ function request(id, amount, slots)
 end
 
 function make(uuid, amount, makeStack)
+  item = ids[uuid]
   makeStack = makeStack or {}
   makeStack[uuid] = true
   amount = amount or 1
   if not ids[uuid] then
     return false
   end
-  print("making "..tostring(amount).." "..ids[uuid].name)
+  print("making "..tostring(amount).." "..item.name)
   local r = recipes[uuid]
   if not r then
-    print("can't make "..ids[uuid].name..", no recipe")
+    print("can't make "..item.name..", no recipe")
     return false
   end
   amount = math.ceil(amount / r.yield)
@@ -472,7 +473,9 @@ function make(uuid, amount, makeStack)
       end
     end
   end
+  local maxStack = item.stackSize
   for mid, slots in pairs(mat) do
+    maxStack = math.min(ids[mid].stackSize, maxStack)
     local needed = verify(mid, amount * #slots)
     if needed > 0 then
       if type(mid) == "string" then
@@ -486,15 +489,15 @@ function make(uuid, amount, makeStack)
           end
         end
         if not made then
-          print("can't make "..ids[uuid].name..", need "..needed.." "..mid)
+          print("can't make "..item.name..", need "..needed.." "..mid)
           return false
         end
       else
         if makeStack[mid] or not make(mid, needed, makeStack) then
           if ids[mid] then
-            print("can't make "..ids[uuid].name..", need "..needed.." "..ids[mid].name)
+            print("can't make "..item.name..", need "..needed.." "..ids[mid].name)
           else
-            print("can't make "..ids[uuid].name..", need "..needed.." "..tostring(mid))
+            print("can't make "..item.name..", need "..needed.." "..tostring(mid))
           end
           return false
         end
@@ -502,8 +505,7 @@ function make(uuid, amount, makeStack)
     end
   end
   while amount > 0 do
-    local currAmount = amount > 64 and 64 or amount
-    amount = amount - 64
+    local currAmount = math.max(amount, maxStack)
     for mid, slots in pairs(mat) do
       request(mid, currAmount, slots)
     end
@@ -511,6 +513,7 @@ function make(uuid, amount, makeStack)
     turtle.craft()
     local count = turtle.getItemCount(1)
     idPutBest(uuid, count)
+    amount = amount - currAmount
   end
   return true
 end

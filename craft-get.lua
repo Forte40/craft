@@ -1,3 +1,5 @@
+--http://pastebin.com/XCyjKvzP
+
 local branch = "master"
 if fs.exists(".craft.branch") then
   local f = fs.open(".craft.branch", "r")
