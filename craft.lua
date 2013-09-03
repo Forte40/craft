@@ -314,7 +314,7 @@ function idPutBest(uuid, count)
     idPut(uuid, count, bestDir)
   else
     for _, direction in ipairs(chests) do
-      idPut(uuid, amount, direction)
+      idPut(uuid, count, direction)
       break
     end
   end
